@@ -1,0 +1,93 @@
+default:
+  image : node:14.19.0-slim	  @ here can i spacific image spesifc to run those stage or scripts
+  tags : 
+    - mohamed @ here this runner i add before and i install in windows 
+workflow: @ this her can i spacific work follow this example it will mean you need to run this all yml file if branch = main , if not = main then skip
+  rules:
+    - if : $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE	!= "merge_request_event" @ $CI_COMMIT_BRANCH this environment variable i bring form docoment of git lab there is more variable you can usse in workflow
+      when : never
+    - when : always
+@ https://docs.gitlab.com/ee/ci/yaml/workflow.html
+@https://docs.gitlab.com/ee/ci/variables/predefined_variables.html
+
+variables: # i can identify prameter insdie  yml file also ratherthan gitlab varibla and i use like other variable 
+  image_repo : dokcer.io\567161912\
+  image_ver : v1.0
+
+
+
+stages:            @ those stage to run my stages in order and if one stage fails it will skip the next stage
+  - test     @ i can name any thing but execuet it will be in odrder form up to down
+  - build
+  - deploy
+
+run_unit_tests:  @here i will identifie steps and i will configuer each one at lest have script
+  stage: test  @ to spesifc which stage belong this i will add after create stages up 
+  before_script:   @ this option with name "before_script" i can include command inside this it will run before script to prepearing env like
+    - echo " this prepearing data and connect to spesifc db"            @ this sample of command
+    
+  script:   @ this section to add all command i need to execuet in this step 
+    - npm build 
+    - echo "this beging of test"
+  after_script:  @ this option with name "after_script" i can run some command after script like remorve empty file or clean some data
+    - echo " here to like delete some temp file or clean data or do any thing after run script"
+    - echo "also if script fail i can run spacific command here"
+artifacts: 
+    when: always #here i say always upload those rport if i not add this option just it will upload when seccsesd 
+    reports:
+       junit : app/junit.xml  # this type of report name junit .. and i spcify where is file 
+
+
+build_mm :
+  Only :   @ we use Only because gitlab-ci-cd if you create any branch it will automatic trigger and run all job inside this file .. if i want to run spacific job like just test i use option Only to spacific which branch it suppose this job to run
+    - main
+    - newFeature
+  stage: build
+  needs :            @ this for relationship between steps in one stage if there more than step in one stage and there is dependency between them i can use needs to select which step depend of which step .. 
+   - run_unit_tests  @ in this example build_mm depend on run_unit_tests if run_unit_tests fail the build_mm will not start
+  script:
+    - echo "begin of building app "
+    - echo "Tagging the Docker "
+
+push_mm :
+  stage : build 
+  script:
+    - echo "Logging"
+    - echo "this micro servises name is  $MICEO_SERV" # i can define customize virable in gitlab and use ans same defind variable up 
+
+
+deploy_mm:
+  stage: deploy
+  needs: @ this mean you can't deploy until those two steps finish ok
+    - build_mm
+    - push_mm
+  script :
+    - echo "thsi deploy stage"
+    - cat $CONF_FILE # also i can mention in environment variable customize is file like key-pair or db configuration file .. first i will add in CICD as variablee and i will add containt in same place then i used
+  
+  befor_script :
+ - chmod 400 $ssh_private_key  @ here we change the mode for key after we add as file in gitlab variable 
+
+script :
+  - sshpass -p Dhaid@4321 scp ./docker-compose.yaml ubuntu@Dev_Host:/home/ubuntu @ first we need to copy docker compose file to server we need to deploy
+  - docker-compose -f docker-compose.yaml down  @ first we will down all container in compose file to lunch new container
+  - docker-compose -f docker-compose.yaml -d  @ here we lunch new container form compose file
+
+
+ - ssh -o StrictHostKeyChecking=no -i $ssh_private_key ubuntu@10.0.0.5 "  @ here first option StrictHostKeyChecking this for skip asking to add key and -i mean input and i pass command between ""
+    docker login -u $docker_hub_id -p $docker_hub_pass  
+    docker run -t -p 3000:3000 $Image_Name:$Image_Tag "
+
+@ we can add docker-compose.yaml file .. this one for add container   
+@ befor that we need to install "apt install docker-compose" in server we need to deploy on it to run file 
+((
+  version: "3.3"  @ version of docker commpose
+  services:  @ this mean we will define container
+  app: @name of container
+    image: ${DC_IMAGE_NAME}:${DC_IMAGE_TAG} @image and tag and we can user our environment variable we use in .gitlab-ci.yml 
+    ports:
+      - ${DC_APP_PORT}:3000 @we will define port and we can use variable for port putting in browser
+))@ we can use docker-commpose file to run docker 
+  environment: 
+     name: staging  @ this we will define the environment and url to monitor and it will showing under tab deployment > environment it will give full details about this deploy and link to open website app
+     url : http://$Dev_Endpoint
