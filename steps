@@ -1,0 +1,320 @@
+1- download ubuntu server
+    - updae and upgrade ubuntu
+    - check there is no swap working 
+        - vim /etc/fstab
+        - cat /proc/swaps   >> this will check there is no swap running
+    * change host name > vim /etc/hostname
+    * we need to check firewall for server cluster to allow those rule 
+    ((
+        cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+        br_netfilter
+        EOF
+
+        cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+        net.bridge.bridge-nf-call-ip6tables = 1
+        net.bridge.bridge-nf-call-iptables = 1
+        EOF
+        sudo sysctl --system
+    ))
+
+    * install Docker :
+     - apt-get install docker.io --yes
+     - we need to add user we use add in docker grup to be able to use docker 
+        because without adding to this group it will deny 
+         " sudo usermod --groups docker --append mm"
+         then we will test run this comand (docker ps or docker info or docker version)
+    * install kubeadmin :
+        - run this command (sudo apt-get install -y apt-transport-https ca-certificates curl  , sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+            , echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+              ,sudo apt-get update
+               sudo apt-get install -y kubelet kubeadm kubectl
+               sudo apt-mark hold kubelet kubeadm kubectl  )
+        - then we will pull image using kubeadm 
+        (
+            kubeadm config images list
+            kubeadm config images pull
+        )
+        - then we will configure subnet mask for pod when lunch by cluster
+        useing this command (kubeadm init --pod-network-cidr 192.168.99.0/24)
+
+        note (we need to change cgroups to systemd in docker so we will follow those step):
+         > we need to know where is docker services file we will use this command (systemctl status docker) we will see path for file 
+         like /lib/systemd/system/docker.service
+         > we will edit insde file in parameter "ExecStart" in end of line same line we will add """--exec-opt native.cgroupdriver=systemd"""
+         it will be like ""ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --exec-opt native.cgroupdriver=systemd""
+         > then we will run this command "systemctl daemon-reload"
+         and then we will restart docker.service "systemctl restart docker.service"
+         > then we will run those comand ""
+            mkdir -p $HOME/.kube
+            sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+            sudo chown $(id -u):$(id -g) $HOME/.kube/config
+            """
+        > we will install network interface we will use ( porject calico) this open source https://www.tigera.io/project-calico/
+        we will follow this documentaion to install "https://projectcalico.docs.tigera.io/getting-started/kubernetes/self-managed-onprem/onpremises"
+
+    - now if we need to run pod :
+     > first create namespace  "kubectl create namespace mohamed1"
+     > run pod or create pod"kubectl run nginx --image=nginx"
+      we will face issure it will not run because we are have just master node and we can't create pod on it for security reson so if we need
+      to run pod in master now we need to run this command (kubectl taint nodes --all node-role.kubernetes.io/control-plane- node-role.kubernetes.io/master-)
+      if we need to see we will run this command (kubectl describe pod --namespace mohamed1)
+    
+
+    * for manage user to access pode or cluster services there is 4 concept :
+        - roll (this mean whate he can do ) 
+        - rollbinding (this assign this roll with namespace or servicess and user )
+        - clusterroll (this mean whate he can do but with multiple namespace and services )
+        - clusterrollbinding (this assign this roll with namespace or servicess and user )
+
+        > we need to create certificates first we will follow this documentaion (https://kubernetes.io/docs/reference/access-authn-authz/certificate-signing-requests/)
+          we need certificate to create user and allow him we use those command form this document 
+          """
+            openssl genrsa -out mohamed.key 2048
+            openssl req -new -key mohamed.key -out mohamed.csr -subj '/CN=mohamed/O=database'   >> CN mean common name and O mean Group for this user here we spicifi both
+            sudo openssl x509 -req -in mohamed.csr -CAcreateserial -CA /etc/kubernetes/pki/ca.crt -CAkey /etc/kubernetes/pki/ca.key -out mohamed.crt -days 1000
+                        
+               """""CA= public key for cluster here we spcifie key from path
+                    CAkey = private key for cluster here we spcifie key from path
+                    days = exprition date
+                    CAcreateserial = this coming without prameter
+               """""
+
+            after implement those command it suppose to have 3 files like 
+            -rw-rw-r-- 1 k8s  k8s  222270 May 10 19:53 calico.yaml
+            -rw-r--r-- 1 root root   1017 May 11 03:38 mohamed.crt
+            -rw------- 1 k8s  k8s    1679 May 10 20:08 mohamed.key
+            -rw-rw-r-- 1 k8s  k8s     915 May 10 20:15 mohamed.csr
+
+            we will remove or delete mohamed.csr
+
+
+          """
+        > we need to create user and assign this key and cert with user so we need to create kubeconfig file for user same file for admin of cluster this file now we need
+        to create same in this path ".kube/config"
+
+        first we will explain what contance :
+
+apiVersion: v1
+clusters:                     "this section we will spcifie cluster informaiton like cert and server here means endpoint for"
+((- cluster:
+    certificate-authority-data: =
+    server: https://192.168.78.35:6443
+  name: kubernetes))                          
+contexts:               "here we will binding user with cluster we will mention cluster name and user name to binding togther "
+((- context:             
+    cluster: kubernetes
+    user: kubernetes-admin
+  name: kubernetes-admin@kubernetes
+current-context: kubernetes-admin@kubernetes
+kind: Config
+preferences: {}))
+users:             "here we will add users there is 3 thing firs user name , cert this form we create before , key this also we create before"
+((- name: kubernetes-admin
+  user:
+    client-certificate-data: =
+    client-key-data: =))
+
+
+
+
+    > first we will create empty config file for first user :
+        kubectl --kubeconfig=mohamed.config config set-cluster mohamedcluster
+
+        the result (
+        cat mohamed.config 
+        apiVersion: v1
+        clusters:
+        - cluster:
+            server: ""
+        name: mohamedcluster
+        contexts: null
+        current-context: ""
+        kind: Config
+        preferences: {}
+        users: null
+        )
+
+   > second we will mention server ip " if you have loadbalance it will be ip of loadbalance " we will bering this ip form file in ""cat .kube/config ""
+        kubectl --kubeconfig=mohamed.config config set-cluster mohamedcluster --server=https://192.168.78.35:6443
+            the result (
+            cat mohamed.config
+                apiVersion: v1
+                clusters:
+                - cluster:
+                    server: https://192.168.78.35:6443
+                name: mohamedcluster
+                contexts: null
+                current-context: ""
+                kind: Config
+                preferences: {}
+                users: null
+            )
+    > therid we will add cert for cluster we will spsifi path of cert
+        kubectl --kubeconfig=mohamed.config config set-cluster mohamedcluster --certificate-authority=/etc/kubernetes/pki/ca.crt --embed-certs
+
+        the result (
+          cat mohamed.config
+            apiVersion: v1
+            clusters:
+            - cluster:
+                certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUMvakNDQWVhZ0F3SUJBZ0lCQURBTkJna3Foa2lHOXcwQkFRc0ZBREFWTVJNd0VRWURWUVFERXdwcmRXSmwKY201bGRHVnpNQjRYRFRJeU1EVXhNREU1TlRJeE4xb1hEVE15TURVd056RTVOVEl4TjFvd0ZURVRNQkVHQTFVRQpBeE1LYTNWaVpYSnVaWFJsY3pDQ0FTSXdEUVlKS29aSWh2Y05BUUVCQlFBRGdnRVBBRENDQVFvQ2dnRUJBSy9tCi9HZ3lzSDI3eEdSM2Z1V1lSYTJpTS9ucUp1SDdSQjJJUi9nbW1LUlhjWG1zN0NjcGVCMng1akJ3MStiUVVMMlMKTUhrZTE0Rk44SDFKcEJOV2RESHBNR3dyRXl5aDFtOWt6MVVaWjZzK1RzajZLa2hLR3BPSjJ2ajREMUtJaGszdwpOVEF1UEZCSmZPNVZBWEpGdi9zc2NmcHI0aG1WNmN3aGJOdFVrdkdPY0d0a3c3Rk9WaXFQY2x2eXRaOWpIdUMyCjBaZUtzQW5VOHFZWCtvcEJSbitQSDUvakVucVhoT0xSRXp6R1ZNZEM1Tk14Q014WUxqTmdZNDV0WmZoTmdZMmMKYUFXeGdRLytCTnpoMUloRzRxeUpSRzRhT1lULzJKTi8xQUZPMXBQT0NQQUZ6MjYxS1FLTUJoTjlPNTJzdHljTwpuZ2hyeXlseDliUkZIbExyMXYwQ0F3RUFBYU5aTUZjd0RnWURWUjBQQVFIL0JBUURBZ0trTUE4R0ExVWRFd0VCCi93UUZNQU1CQWY4d0hRWURWUjBPQkJZRUZCOXZNT1MraW0yU0ZUWmtMaldudXV3cTRsSzVNQlVHQTFVZEVRUU8KTUF5Q0NtdDFZbVZ5Ym1WMFpYTXdEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBSStCUUxUVWFnTGg0SFdIcnNBTwowRTMySTNGRTNkUkR2RkdUZ3Zvdkc3NWhmOFc3bmVsSlhlaTdtNEFKcDdONzdsOFcxOWZ0aHZGVkJEamNpYVNDCjBnQ3BkZW00cE96ekU0Uk4yZWFya0lBRWJhTVVvRHlOdElvYnpNQWpEWGVoeFlHUlhjSXFVVkNlN3BuWEZGMk4KZ0RVaUV5dDl0dWYxZ0ZKS21OWFZRdVNNTTJrcFFYRVZXRDhJaGN6OHhsWnNzbTJWSWNXOVdvZ1V3RE8vYVQ3TApOSjY3REVFei8rZEY3bWlBdjNPYnRMVGJ2cmE3SncwZDc1amFqaXBLVjI0YldYdTMwK3FZb3RmK0VXQlV2Z3lrCnNxUHhtcVM2UHhWbjAwQTRCOXZONitVQUlKNHU2ajdRV2FoM0hyYjlML0p5eERzOUtiSFJXQWxuVEN1SnkrQVUKTnRFPQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+                server: https://192.168.78.35:6443
+            name: mohamedcluster
+            contexts: null
+            current-context: ""
+            kind: Config
+            preferences: {}
+            users: null
+        )
+    > forth we will set user 
+        kubectl --kubeconfig=mohamed.config config set-credentials --client-certificate mohamed.crt --client-key mohamed.key --embed-certs mohamed --username mohamed
+        
+        the result (
+                cat mohamed.config 
+                    apiVersion: v1
+                    clusters:
+                    - cluster:
+                        certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUMvakNDQWVhZ0F3SUJBZ0lCQURBTkJna3Foa2lHOXcwQkFRc0ZBREFWTVJNd0VRWURWUVFERXdwcmRXSmwKY201bGRHVnpNQjRYRFRJeU1EVXhNREU1TlRJeE4xb1hEVE15TURVd056RTVOVEl4TjFvd0ZURVRNQkVHQTFVRQpBeE1LYTNWaVpYSnVaWFJsY3pDQ0FTSXdEUVlKS29aSWh2Y05BUUVCQlFBRGdnRVBBRENDQVFvQ2dnRUJBSy9tCi9HZ3lzSDI3eEdSM2Z1V1lSYTJpTS9ucUp1SDdSQjJJUi9nbW1LUlhjWG1zN0NjcGVCMng1akJ3MStiUVVMMlMKTUhrZTE0Rk44SDFKcEJOV2RESHBNR3dyRXl5aDFtOWt6MVVaWjZzK1RzajZLa2hLR3BPSjJ2ajREMUtJaGszdwpOVEF1UEZCSmZPNVZBWEpGdi9zc2NmcHI0aG1WNmN3aGJOdFVrdkdPY0d0a3c3Rk9WaXFQY2x2eXRaOWpIdUMyCjBaZUtzQW5VOHFZWCtvcEJSbitQSDUvakVucVhoT0xSRXp6R1ZNZEM1Tk14Q014WUxqTmdZNDV0WmZoTmdZMmMKYUFXeGdRLytCTnpoMUloRzRxeUpSRzRhT1lULzJKTi8xQUZPMXBQT0NQQUZ6MjYxS1FLTUJoTjlPNTJzdHljTwpuZ2hyeXlseDliUkZIbExyMXYwQ0F3RUFBYU5aTUZjd0RnWURWUjBQQVFIL0JBUURBZ0trTUE4R0ExVWRFd0VCCi93UUZNQU1CQWY4d0hRWURWUjBPQkJZRUZCOXZNT1MraW0yU0ZUWmtMaldudXV3cTRsSzVNQlVHQTFVZEVRUU8KTUF5Q0NtdDFZbVZ5Ym1WMFpYTXdEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBSStCUUxUVWFnTGg0SFdIcnNBTwowRTMySTNGRTNkUkR2RkdUZ3Zvdkc3NWhmOFc3bmVsSlhlaTdtNEFKcDdONzdsOFcxOWZ0aHZGVkJEamNpYVNDCjBnQ3BkZW00cE96ekU0Uk4yZWFya0lBRWJhTVVvRHlOdElvYnpNQWpEWGVoeFlHUlhjSXFVVkNlN3BuWEZGMk4KZ0RVaUV5dDl0dWYxZ0ZKS21OWFZRdVNNTTJrcFFYRVZXRDhJaGN6OHhsWnNzbTJWSWNXOVdvZ1V3RE8vYVQ3TApOSjY3REVFei8rZEY3bWlBdjNPYnRMVGJ2cmE3SncwZDc1amFqaXBLVjI0YldYdTMwK3FZb3RmK0VXQlV2Z3lrCnNxUHhtcVM2UHhWbjAwQTRCOXZONitVQUlKNHU2ajdRV2FoM0hyYjlML0p5eERzOUtiSFJXQWxuVEN1SnkrQVUKTnRFPQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+                        server: https://192.168.78.35:6443
+                    name: mohamedcluster
+                    contexts: null
+                    current-context: ""
+                    kind: Config
+                    preferences: {}
+                    users:
+                    - name: mohamed
+                    user:
+                        client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUN3VENDQWFrQ0ZHVVIxTjlZbklvQXBDSUU4eW5XSEdLK0VHVFVNQTBHQ1NxR1NJYjNEUUVCQ3dVQU1CVXgKRXpBUkJnTlZCQU1UQ210MVltVnlibVYwWlhNd0hoY05Nakl3TlRFeE1ETXpPREl3V2hjTk1qVXdNakEwTURNegpPREl3V2pBbE1SQXdEZ1lEVlFRRERBZHRiMmhoYldWa01SRXdEd1lEVlFRS0RBaGtZWFJoWW1GelpUQ0NBU0l3CkRRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFNWTFvUUVmZnpxUFVHVlVzalkwWndNeTdNUVgKL1VxNHRmdmV3eGpzV0xKRmlTQnFVWVNLTEFrakpHcTdaR0swTjhTcjNweUpOUkttWjk2dk43Rmo4MzBrMU83WQpwUzFxU0F1RE4yK3hEME1aS2JQTk1xVGhlcURwbGduczM5cUdUOUtLeXpjVndOcnQzdHVYL1U0aUpHV3Y5L2lKCldleEMxd2NjVU5ZVXlnOWhCTnhoeHpvMk5pRG5seko2aDR0RTdiZEk0SnZsQ3lObEhyREd5LzRkejJtVUtBSkgKeUsyVmI3RjJYNjQwWEpOYXdkSUkrT2NWOW1jRXh1cml0WkhsWThyTUZabEtITTZrNUorYzZlTHdLOEdGMng5MQoybmwxV0ZFU2I2aFg2KzByRUZRYmZzenlUTWtaVC9uTjB2NFptVmtEQ2IweERLRDlZSHRYeWhGZnIrOENBd0VBCkFUQU5CZ2txaGtpRzl3MEJBUXNGQUFPQ0FRRUFGQmdRdkFhYTI4QTVYeU1waGZ5ZGx0UkhsdElNYWs1ZzV5T24KVnJSK1F0dlhWQ1J3YUMzakkrbUNHcjBYTVNkNGIwZmY3cEh0UHZxa2NKNTFKQkNPN2h2KzhZaGc2a2xqVGZsdQp1a2pRaWlGTWg0UGoxRytWU2FhUFk2MXBmdDA0ZEZKMGFseHREOXpHcUVWNml3eTZkdGJCNElHeklPOXVtdkVlCktwd1FZYmZ2OEFaZC9HM2MyMHZRVWUzRUhrb0w0d25YZUJyU2lkZ0VTajRmUE1Sd0tDZnMrS0pEVng4ZEo5bmYKSDFwU0RwVzlkTXJJRkw5dkF2cER6ZzFJLzN5VUl5azNiSGZkRU1OTVNjN04rcG4zTGZpMmtPRHlGVmluTjl2SQo5bWhUUFliYmFobjZnSGtMWThZZ2hSV2ppTUlBRm54Vk5IZll0bXhyZDcwTFh3RnRudz09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+                        client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcEFJQkFBS0NBUUVBeGpXaEFSOS9PbzlRWlZTeU5qUm5BekxzeEJmOVNyaTErOTdER094WXNrV0pJR3BSCmhJb3NDU01rYXJ0a1lyUTN4S3ZlbklrMUVxWm4zcTgzc1dQemZTVFU3dGlsTFdwSUM0TTNiN0VQUXhrcHM4MHkKcE9GNm9PbVdDZXpmMm9aUDBvckxOeFhBMnUzZTI1ZjlUaUlrWmEvMytJbFo3RUxYQnh4UTFoVEtEMkVFM0dISApPalkySU9lWE1ucUhpMFR0dDBqZ20rVUxJMlVlc01iTC9oM1BhWlFvQWtmSXJaVnZzWFpmcmpSY2sxckIwZ2o0CjV4WDJad1RHNnVLMWtlVmp5c3dWbVVvY3pxVGtuNXpwNHZBcndZWGJIM1hhZVhWWVVSSnZxRmZyN1NzUVZCdCsKelBKTXlSbFArYzNTL2htWldRTUp2VEVNb1AxZ2UxZktFVit2N3dJREFRQUJBb0lCQUZBT1BSZGRCMkE1bmprdgpPa09XYXJ6cUJxTTFKVUxXMC9vRkFUdkJ5aGxHNkpuRkYyTzNBdzQxdVhHNmVsTTdnd0xXZ0RVdFhkaElpYzl4CmFjY21IYVJBQ2hqbU8rRForbnRiNWpvZ2c0K1FURDJvOVhtTzhKNnBlY1pNZkNXZzlnQ051b0puTU51OEU3VVIKOEdkc2R0THpmZTVPVzVtSGJaNGJtN0s3OXRpNm1kOERNRlY4N2FQV01oNmFMSHc4eE5xN1JKSGtpU0U5bFlFVAo4ODkrL2RHcEh4Y3FhL1FuV0JjVjM4QnJYbm5WNDBiQ3hXeEVwbEZ0WnFJaEJ5TVBZd2xZN201TXhTSCtONXhMCjNYN3F3N3JYKythYyswa3NBa1VrWU8xd1NHZGY0cFN0cUdtSHA1bGsyaDhjZVc1bFJYVXdIYUprWjRzVnBUWnYKN0hGc2xqRUNnWUVBK3NKZWY4RFZyRXV1NFpMdzQ2YWp1WFNMb0h3ZVZXRDJpV20zZnVIOWIwazFSbVUrc2ZKRwpzWGV4Z1g1OVRjczFBUU1Pb3U2TGtUem1WNlpZQ1pxcEE5aVZlcFJ1ektOSWdnL3ozUXkveTMvcjFqSW1DZzF3CkVxcHZibk9IeGpHU0tCWlF2Wm1zSG9OZ0VsYjFjbXlWRXRQQUZNMHB6YkhHNEY0bFpGRkNvdU1DZ1lFQXlsb2EKcHNUU0VhRllteDIwK2dDcUYxa24vWEJUNGRNQWNGaVc1MmxhbW44TE41SERjY1dmdjJ1MlMzZ3pVMXYxNDREQgpkM1pZTWdDaHNYdHdmU2Zic3dRSE45dE1EREVobTBUVUpjZjROOUNHK3BlZGc3b1RORVVrdkRaNzgwcGMxRkFnClpMWXFUQXpHUTFleGVWR1FaejB4NkcvMTBaaHBNZFZpemJrM3NJVUNnWUVBbmtwNEVMa1BxTldWclh0dWFLWlcKajhsTUlxQjNIWG81NW9BL2Z1NzFabnlXRHJ2Mm1hblFpbEorVUxvaUt5dHRhQmdmOHlZV0lEYUxTU1VPU2ZIQgpZMVlpOWVBaEdUaXhtcmlyUGd6QVBadWdxZk82STNwY0ZzeFR6eXRLdUFldXRYTnd3Rjd6VWNlb3E2c05BWkFkCmdtYjh4NlRERUw5NlJVUG80cXlSSGZVQ2dZQTBvTXl2dFI4QnNOb1B0ZUU4NkhGVWt6NmdYdGVpTXpPNUJJRnkKL0dheEtmdXIzMEJhMWRCZmc4OHN2NzF4bjhoSy9GRFZGaldJQTd3S0loVzJwMmd2bmd1V2puV3Y4aE5RZzgwOQphazMzamtlYzQxUDNUNnp3K2s2OG1Oc1NBclEwRUFic3lxZ2prV3I3VnRKMHdDN3pldW9CRHlWNjlzM2RSU2RtClpCYkUxUUtCZ1FEV2VuNlZRNll1NlFWLzlmS09YeThMeFFHcnptWDJKQXltLzYyWmx3ekpiMUdnWFI5Y3dyckYKa0Uwa3NrMjdnNllOcUpKSDcycUM4TkxYQjIwTEZtSTVJM1VsdWZlVStlUE45NGdkZzJtS1JCalFvSVAvMlF6YQpPbnJzYUNwTXk2Yy9OdXdoazNnSVEvc2ZUaU4rTXhHeVhVNUszK1dLSkhYRXYxV1pobTdhdEE9PQotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo=
+                        username: mohamed
+        )
+
+        > five we will set contex to binding roll with cluster
+
+            kubectl --kubeconfig=mohamed.config config set-context mohamedcontext --cluster mohamedcluster --user mohamed --namespace database
+
+                the result (
+
+                     cat mohamed.config 
+                        apiVersion: v1
+                        clusters:
+                        - cluster:
+                            certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUMvakNDQWVhZ0F3SUJBZ0lCQURBTkJna3Foa2lHOXcwQkFRc0ZBREFWTVJNd0VRWURWUVFERXdwcmRXSmwKY201bGRHVnpNQjRYRFRJeU1EVXhNREU1TlRJeE4xb1hEVE15TURVd056RTVOVEl4TjFvd0ZURVRNQkVHQTFVRQpBeE1LYTNWaVpYSnVaWFJsY3pDQ0FTSXdEUVlKS29aSWh2Y05BUUVCQlFBRGdnRVBBRENDQVFvQ2dnRUJBSy9tCi9HZ3lzSDI3eEdSM2Z1V1lSYTJpTS9ucUp1SDdSQjJJUi9nbW1LUlhjWG1zN0NjcGVCMng1akJ3MStiUVVMMlMKTUhrZTE0Rk44SDFKcEJOV2RESHBNR3dyRXl5aDFtOWt6MVVaWjZzK1RzajZLa2hLR3BPSjJ2ajREMUtJaGszdwpOVEF1UEZCSmZPNVZBWEpGdi9zc2NmcHI0aG1WNmN3aGJOdFVrdkdPY0d0a3c3Rk9WaXFQY2x2eXRaOWpIdUMyCjBaZUtzQW5VOHFZWCtvcEJSbitQSDUvakVucVhoT0xSRXp6R1ZNZEM1Tk14Q014WUxqTmdZNDV0WmZoTmdZMmMKYUFXeGdRLytCTnpoMUloRzRxeUpSRzRhT1lULzJKTi8xQUZPMXBQT0NQQUZ6MjYxS1FLTUJoTjlPNTJzdHljTwpuZ2hyeXlseDliUkZIbExyMXYwQ0F3RUFBYU5aTUZjd0RnWURWUjBQQVFIL0JBUURBZ0trTUE4R0ExVWRFd0VCCi93UUZNQU1CQWY4d0hRWURWUjBPQkJZRUZCOXZNT1MraW0yU0ZUWmtMaldudXV3cTRsSzVNQlVHQTFVZEVRUU8KTUF5Q0NtdDFZbVZ5Ym1WMFpYTXdEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBSStCUUxUVWFnTGg0SFdIcnNBTwowRTMySTNGRTNkUkR2RkdUZ3Zvdkc3NWhmOFc3bmVsSlhlaTdtNEFKcDdONzdsOFcxOWZ0aHZGVkJEamNpYVNDCjBnQ3BkZW00cE96ekU0Uk4yZWFya0lBRWJhTVVvRHlOdElvYnpNQWpEWGVoeFlHUlhjSXFVVkNlN3BuWEZGMk4KZ0RVaUV5dDl0dWYxZ0ZKS21OWFZRdVNNTTJrcFFYRVZXRDhJaGN6OHhsWnNzbTJWSWNXOVdvZ1V3RE8vYVQ3TApOSjY3REVFei8rZEY3bWlBdjNPYnRMVGJ2cmE3SncwZDc1amFqaXBLVjI0YldYdTMwK3FZb3RmK0VXQlV2Z3lrCnNxUHhtcVM2UHhWbjAwQTRCOXZONitVQUlKNHU2ajdRV2FoM0hyYjlML0p5eERzOUtiSFJXQWxuVEN1SnkrQVUKTnRFPQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+                            server: https://192.168.78.35:6443
+                        name: mohamedcluster
+                        contexts:
+                        - context:
+                            cluster: mohamedcluster
+                            namespace: database
+                            user: mohamed
+                        name: mohamedcontext
+                        current-context: ""
+                        kind: Config
+                        preferences: {}
+                        users:
+                        - name: mohamed
+                        user:
+                            client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUN3VENDQWFrQ0ZHVVIxTjlZbklvQXBDSUU4eW5XSEdLK0VHVFVNQTBHQ1NxR1NJYjNEUUVCQ3dVQU1CVXgKRXpBUkJnTlZCQU1UQ210MVltVnlibVYwWlhNd0hoY05Nakl3TlRFeE1ETXpPREl3V2hjTk1qVXdNakEwTURNegpPREl3V2pBbE1SQXdEZ1lEVlFRRERBZHRiMmhoYldWa01SRXdEd1lEVlFRS0RBaGtZWFJoWW1GelpUQ0NBU0l3CkRRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFNWTFvUUVmZnpxUFVHVlVzalkwWndNeTdNUVgKL1VxNHRmdmV3eGpzV0xKRmlTQnFVWVNLTEFrakpHcTdaR0swTjhTcjNweUpOUkttWjk2dk43Rmo4MzBrMU83WQpwUzFxU0F1RE4yK3hEME1aS2JQTk1xVGhlcURwbGduczM5cUdUOUtLeXpjVndOcnQzdHVYL1U0aUpHV3Y5L2lKCldleEMxd2NjVU5ZVXlnOWhCTnhoeHpvMk5pRG5seko2aDR0RTdiZEk0SnZsQ3lObEhyREd5LzRkejJtVUtBSkgKeUsyVmI3RjJYNjQwWEpOYXdkSUkrT2NWOW1jRXh1cml0WkhsWThyTUZabEtITTZrNUorYzZlTHdLOEdGMng5MQoybmwxV0ZFU2I2aFg2KzByRUZRYmZzenlUTWtaVC9uTjB2NFptVmtEQ2IweERLRDlZSHRYeWhGZnIrOENBd0VBCkFUQU5CZ2txaGtpRzl3MEJBUXNGQUFPQ0FRRUFGQmdRdkFhYTI4QTVYeU1waGZ5ZGx0UkhsdElNYWs1ZzV5T24KVnJSK1F0dlhWQ1J3YUMzakkrbUNHcjBYTVNkNGIwZmY3cEh0UHZxa2NKNTFKQkNPN2h2KzhZaGc2a2xqVGZsdQp1a2pRaWlGTWg0UGoxRytWU2FhUFk2MXBmdDA0ZEZKMGFseHREOXpHcUVWNml3eTZkdGJCNElHeklPOXVtdkVlCktwd1FZYmZ2OEFaZC9HM2MyMHZRVWUzRUhrb0w0d25YZUJyU2lkZ0VTajRmUE1Sd0tDZnMrS0pEVng4ZEo5bmYKSDFwU0RwVzlkTXJJRkw5dkF2cER6ZzFJLzN5VUl5azNiSGZkRU1OTVNjN04rcG4zTGZpMmtPRHlGVmluTjl2SQo5bWhUUFliYmFobjZnSGtMWThZZ2hSV2ppTUlBRm54Vk5IZll0bXhyZDcwTFh3RnRudz09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+                            client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFcEFJQkFBS0NBUUVBeGpXaEFSOS9PbzlRWlZTeU5qUm5BekxzeEJmOVNyaTErOTdER094WXNrV0pJR3BSCmhJb3NDU01rYXJ0a1lyUTN4S3ZlbklrMUVxWm4zcTgzc1dQemZTVFU3dGlsTFdwSUM0TTNiN0VQUXhrcHM4MHkKcE9GNm9PbVdDZXpmMm9aUDBvckxOeFhBMnUzZTI1ZjlUaUlrWmEvMytJbFo3RUxYQnh4UTFoVEtEMkVFM0dISApPalkySU9lWE1ucUhpMFR0dDBqZ20rVUxJMlVlc01iTC9oM1BhWlFvQWtmSXJaVnZzWFpmcmpSY2sxckIwZ2o0CjV4WDJad1RHNnVLMWtlVmp5c3dWbVVvY3pxVGtuNXpwNHZBcndZWGJIM1hhZVhWWVVSSnZxRmZyN1NzUVZCdCsKelBKTXlSbFArYzNTL2htWldRTUp2VEVNb1AxZ2UxZktFVit2N3dJREFRQUJBb0lCQUZBT1BSZGRCMkE1bmprdgpPa09XYXJ6cUJxTTFKVUxXMC9vRkFUdkJ5aGxHNkpuRkYyTzNBdzQxdVhHNmVsTTdnd0xXZ0RVdFhkaElpYzl4CmFjY21IYVJBQ2hqbU8rRForbnRiNWpvZ2c0K1FURDJvOVhtTzhKNnBlY1pNZkNXZzlnQ051b0puTU51OEU3VVIKOEdkc2R0THpmZTVPVzVtSGJaNGJtN0s3OXRpNm1kOERNRlY4N2FQV01oNmFMSHc4eE5xN1JKSGtpU0U5bFlFVAo4ODkrL2RHcEh4Y3FhL1FuV0JjVjM4QnJYbm5WNDBiQ3hXeEVwbEZ0WnFJaEJ5TVBZd2xZN201TXhTSCtONXhMCjNYN3F3N3JYKythYyswa3NBa1VrWU8xd1NHZGY0cFN0cUdtSHA1bGsyaDhjZVc1bFJYVXdIYUprWjRzVnBUWnYKN0hGc2xqRUNnWUVBK3NKZWY4RFZyRXV1NFpMdzQ2YWp1WFNMb0h3ZVZXRDJpV20zZnVIOWIwazFSbVUrc2ZKRwpzWGV4Z1g1OVRjczFBUU1Pb3U2TGtUem1WNlpZQ1pxcEE5aVZlcFJ1ektOSWdnL3ozUXkveTMvcjFqSW1DZzF3CkVxcHZibk9IeGpHU0tCWlF2Wm1zSG9OZ0VsYjFjbXlWRXRQQUZNMHB6YkhHNEY0bFpGRkNvdU1DZ1lFQXlsb2EKcHNUU0VhRllteDIwK2dDcUYxa24vWEJUNGRNQWNGaVc1MmxhbW44TE41SERjY1dmdjJ1MlMzZ3pVMXYxNDREQgpkM1pZTWdDaHNYdHdmU2Zic3dRSE45dE1EREVobTBUVUpjZjROOUNHK3BlZGc3b1RORVVrdkRaNzgwcGMxRkFnClpMWXFUQXpHUTFleGVWR1FaejB4NkcvMTBaaHBNZFZpemJrM3NJVUNnWUVBbmtwNEVMa1BxTldWclh0dWFLWlcKajhsTUlxQjNIWG81NW9BL2Z1NzFabnlXRHJ2Mm1hblFpbEorVUxvaUt5dHRhQmdmOHlZV0lEYUxTU1VPU2ZIQgpZMVlpOWVBaEdUaXhtcmlyUGd6QVBadWdxZk82STNwY0ZzeFR6eXRLdUFldXRYTnd3Rjd6VWNlb3E2c05BWkFkCmdtYjh4NlRERUw5NlJVUG80cXlSSGZVQ2dZQTBvTXl2dFI4QnNOb1B0ZUU4NkhGVWt6NmdYdGVpTXpPNUJJRnkKL0dheEtmdXIzMEJhMWRCZmc4OHN2NzF4bjhoSy9GRFZGaldJQTd3S0loVzJwMmd2bmd1V2puV3Y4aE5RZzgwOQphazMzamtlYzQxUDNUNnp3K2s2OG1Oc1NBclEwRUFic3lxZ2prV3I3VnRKMHdDN3pldW9CRHlWNjlzM2RSU2RtClpCYkUxUUtCZ1FEV2VuNlZRNll1NlFWLzlmS09YeThMeFFHcnptWDJKQXltLzYyWmx3ekpiMUdnWFI5Y3dyckYKa0Uwa3NrMjdnNllOcUpKSDcycUM4TkxYQjIwTEZtSTVJM1VsdWZlVStlUE45NGdkZzJtS1JCalFvSVAvMlF6YQpPbnJzYUNwTXk2Yy9OdXdoazNnSVEvc2ZUaU4rTXhHeVhVNUszK1dLSkhYRXYxV1pobTdhdEE9PQotLS0tLUVORCBSU0EgUFJJVkFURSBLRVktLS0tLQo=
+                            username: mohamed
+                )
+
+        > to test user we will use :
+            kubectl --kubeconfig mohamed.config version
+
+            kubectl --kubeconfig mohamed.config get namespace
+            kubectl create namespace database 
+        > to see resourc with api 
+            kubectl api-resources
+        > then we need to create roll means permission for resource form api 
+
+            kubectl create role mohamedrole --verb=get,list,delete,create --resource=pods --namespace database
+        > then we need to create rolebinding to connect role with user
+
+            kubectl create rolebinding mohamedrolebinding --user=mohamed --role=mohamedrole --namespaces databaces
+
+        > to check if role assing with namespace 
+
+            kubectl --namespace database describe role
+            kubectl --namespace database describe rolebinding
+        > to test user is have permission in role 
+
+            kubectl --kubeconfig mohamed.config --namespace database get pods
+
+----------------------------------------------------------------------------------------------
+    # now we will create file manfist to create resource best document to understand fild in file we will check reference form kubernetes
+    "https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-v1/" to explain to us what mean of parameter in side we need to firewall
+
+    > before write file we need to know what apiVersion we will user 
+    this command for api for group mean each resourc belong to group of resourc this will know which version (kubectl api-versions)
+    and this other command to know exacly spcific resourc version (kubectl api-resources) form this command can i know what name of "kind" for resourc
+    and also what apiVersion for this resourc to write in file
+
+    > after create file if we need to deploy we will use this command (kubectl apply --filename mypod1.yml) to verify we will use this command (kubectl get pod)
+     to delete resourc form same file name we will use this command (kubectl delete --filename mypod1.yml) also we can delete by name of resourc like mypod1 this name for pod
+  
+  # in same file we can define multiple resourc in same file we will isolate between each resourc by "---" 
+
+  #to make defalt namespace will use this command (kubens mm)
+  to monitor use this command (kubectl describe pod/moha --namespace networking)
+  - to make lable use this command (kubectl label pod/moha name=myapp --namespace networking)
+
+https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#-strong-getting-started-strong-
+
+
+##--------------------------
+> step to create user and create for him rule and bindding role and edit config file for him
+1- 
+
+# create namespace
+kubectl create namespace my-micro-service
+
+# create Role for GitLab CI/CD
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: my-micro-service
+  name: cicd
+rules:
+- apiGroups: [""] # indicates the core API group
+  resources: ["pods", "services", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["extensions", "apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# create Service Account
+kubectl create serviceaccount cicd-sa --namespace=my-micro-service
+
+# assign cicd role to SA
+kubectl create rolebinding cicd-sa-rb \
+  --role=cicd-role \
+  --serviceaccount=my-app:cicd-sa \
+  --namespace=my-micro-service
+
+#-------------------------------------
+2- 
+## get service account token for the GitLab CICD
+
+# get token secret name
+kubectl get serviceaccount cicd-sa -n my-micro-service -o yaml
+# get token 
+kubectl get secret cicd-sa-token-7pkbb -n my-micro-service -o yaml
+
+# duplicate admin kubeconfig "cicd-kubeconfig.yaml"
+# replace token in cicd-kubeconfig file with gitlab's decoded token
+
+# decode it
+echo token | base64 -D
+
+#-------------------------------------------
+3-
+export KUBECONFIG=xxx
+kubectl create service test -n my-micro-service # works
+kubectl delete service test -n my-micro-service # doesn't work
+kubectl get pod -n kube-system # doesn't work
+#-------------------------------------------
+
+
+
+

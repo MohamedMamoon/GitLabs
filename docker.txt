@@ -1,0 +1,48 @@
+# docker run nginx 
+@ i can specific name for my container by using 
+#docker run -d --name Mywebsite nginx
+
+@this it will pull and run webserber 
+to see container we will ues this command @
+# docker ps
+
+@ to see what happane in background we will use thsi command 
+# docker log "we will enter here CONTAINER ID or name of container "
+@ i can start and stop container by using this command
+# docker stop "name of container"
+# docker start "name of container"
+
+@ i can remove image i pull by 
+# docker rm image "name of image"
+# docker images @ to see what image i have pull
+
+@ to get ip for container we use this command
+#docker inspect "name of container" | grep IP
+@we can run docker by specific port this is mapping port
+# docker run -d -p 8000:8080 adejonge/helloworld
+@we can use host other than port 
+# docker run -d  --net=host adejonge/helloworld
+
+
+@ i have ability to mount follder inside container first i will create folder and then i will user (-v) thsi mean volume i will specific where my folder and where i need to mapping inside container
+
+# docker run -d -p /home/mohamed/website:/usr/share/nginx/html nginx
+
+@ if i need to conect to my container to modifie i have use command  "exec"  (-i) this mean interactive (-t) mean terminal and then i will specific name of container and what command i need to run i use (bash)
+
+# docker exec -i -t moha bash
+@ to modifi file inside container i use ( cat > index.html  mohamed mamoon ) and then Crtl + d
+@ if i edit my container and i need to take imge form running container i will use commit command
+
+# docker commit moha my_nginx 
+
+@ i have ability to create container as data to mapping storage i will do by :
+1- create folder i will mention in container
+/usr/share/nginx/html
+2- crate container
+#docker create --name my_data  -v /usr/share/nginx/html nginx
+3- i will create application container and i mapping my_data as volume
+# docker run -d --name my_app --volume-form my_data  nginx
+
+@ to run docker GUI 
+#docker run -d -p 9000:9000 --privileged -v /var/run/docker.sock:/var/run/docker.sock dockerui/dockerui
