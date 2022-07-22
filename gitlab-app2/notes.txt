@@ -1,0 +1,63 @@
+chmod 400 ~/Downloads/file-kubeconfig.yaml
+export KUBECONFIG=~/Downloads/file-kubeconfig.yaml
+kubectl get namespace
+
+#----------------------------------------------------
+
+Create gitlab user and permissions : 
+
+# create namespace
+kubectl create namespace my-micro-service
+
+# create Role for GitLab CI/CD
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: my-micro-service
+  name: cicd
+rules:
+- apiGroups: [""] # indicates the core API group
+  resources: ["pods", "services", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["extensions", "apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# create Service Account
+kubectl create serviceaccount cicd-sa --namespace=my-micro-service
+
+# assign cicd role to SA
+kubectl create rolebinding cicd-sa-rb \
+  --role=cicd-role \
+  --serviceaccount=my-app:cicd-sa \
+  --namespace=my-micro-service
+
+
+
+#----------------------------------------------------
+
+
+Create kubeconfig for cicd service account :
+
+
+## get service account token for the GitLab CICD
+
+# get token secret name
+kubectl get serviceaccount cicd-sa -n my-micro-service -o yaml
+# get token 
+kubectl get secret cicd-sa-token-7pkbb -n my-micro-service -o yaml
+
+# duplicate admin kubeconfig "cicd-kubeconfig.yaml"
+# replace token in cicd-kubeconfig file with gitlab's decoded token
+
+# decode it
+echo token | base64 -D
+
+
+#----------------------------------------------------
+Test with new kubeconfig : 
+
+export KUBECONFIG=xxx
+kubectl create service test -n my-micro-service # works
+kubectl delete service test -n my-micro-service # doesn't work
+kubectl get pod -n kube-system # doesn't work
